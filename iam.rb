@@ -34,7 +34,7 @@ module AWS
         'Path'      => path,
         'UserName'  => username
       }
-      send_request
+      send_request(params)
     end
 
     def get_signing_certificates(username)
@@ -161,27 +161,6 @@ module AWS
           'SignatureVersion'  => '2',
           'SignatureMethod'   => 'HmacSHA256'
         }
-      end
-
-      def cannonical_string
-        # sort the hash by key value and return by creating an array
-        param_array = Array.new
-        @params.sort_by { |k, v| k }.each do |param|
-          param_array << "#{param[0]}=#{CGI.escape param[1]}"
-        end
-
-        # create the canonical_string
-        canonical_string = "#{param_array.join('&')}"
-      end
-
-      def string_to_sign
-       return "#{@method}\n#{@host}\n#{@uri}\n#{cannonical_string}"
-      end
-
-      def signature
-        digest = OpenSSL::Digest::Digest.new('sha256')
-        b64_hmac = [OpenSSL::HMAC.digest(digest, @secret_access_key, string_to_sign)].pack("m").strip
-        CGI.escape(b64_hmac)
       end
 
       def get_path(params)
