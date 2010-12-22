@@ -71,7 +71,20 @@ module AWS
       groups = Array.new
       doc = make_document(send_request(params))
       doc.elements.each('//GroupName') do |group|
-          groups << group.text
+        groups << group.text
+      end
+      groups
+    end
+
+    def get_groups(path='/')
+      params = {
+        'Action'      => 'ListGroups',
+        'PathPrefix'  => path
+      }
+      groups = Array.new
+      doc = make_document(send_request(params))
+      doc.elements.each('//GroupName') do |group|
+        groups << group.text
       end
       groups
     end
@@ -102,7 +115,7 @@ module AWS
         'Action'        => 'DeleteSigningCertificate',
         'CertificateId' => cert_id
       }
-      params['UserName'] = username unless username == nil
+      params['UserName'] = username if username
       send_request(params)
     end
 
@@ -111,7 +124,7 @@ module AWS
         'Action'      => 'DeleteAccessKey',
         'AccessKeyId' => access_key_id
       }
-      params['UserName'] = username unless username == nil
+      params['UserName'] = username if username
       send_request(params)
     end
 
@@ -124,28 +137,61 @@ module AWS
       send_request(params)
     end
 
+    def create_access_key(username=nil)
+      params = {
+        'Action'    => 'CreateAccessKey',
+      }
+      params['UserName'] = username if username
+      doc = make_document(send_request(params))
+      
+      iam_credentials = Hash.new
+      doc.elements.each('//AccessKeyId') do |access_key_id|
+        iam_credentials[:access_key_id] = access_key_id.text
+      end
+
+      doc.elements.each('//SecretAccessKey') do |secret_access_key|
+        iam_credentials[:secret_access_key] = secret_access_key.text
+      end
+      
+      iam_credentials
+    end
+
+    def upload_signing_certificate(certificate, username=nil)
+      params = {
+        'Action'          => 'UploadSigningCertificate',
+        'CertificateBody' => certificate
+      }
+      params['UserName'] = username if username
+      send_request(params, :post)
+    end
+
 
     private
       def send_request(params, method = :get)
         params.merge! add_default_params
-        @params = params
         http = create_connection
         case method
         when :get
           @method = "GET"
           path = get_path(params)
-          response, xml_data = http.get(path)
-          case response
-          when Net::HTTPOK
-            return xml_data
-          else
-            # find the error message and return it
-            root = make_document(xml_data).root
-            code = root.elements["Error[1]/Code"].text
-            msg = root.elements["Error[1]/Message"].text
-            puts xml_data
-            raise Exception.new("#{code}: #{msg}")
-          end
+          response, xml_data = http.get("#{@uri}?#{path}")
+        when :post
+          @method = "POST"
+          path = get_path(params)
+          response, xml_data = http.post(@uri, path)
+        else
+          raise Exception.new("send_request called without a valid method: #{method}")
+        end
+
+        case response
+        when Net::HTTPOK
+          return xml_data
+        else
+          # find the error message and return it
+          root = make_document(xml_data).root
+          code = root.elements["Error[1]/Code"].text
+          msg = root.elements["Error[1]/Message"].text
+          raise Exception.new("#{code}: #{msg}")
         end
       end
 
@@ -164,20 +210,21 @@ module AWS
       end
 
       def get_path(params)
-        # first we need to get the cannonical string
+        # first we need to get the canonical string
         # this needs to be sorted alphabetically
         param_array = Array.new
         params.sort_by { |k, v| k}.each do |param|
-          param_array << "#{param[0]}=#{CGI.escape param[1]}"
+          param_array << "#{CGI.escape(param[0]).gsub("+", "%20")}=#{CGI.escape(param[1]).gsub("+", "%20")}"
         end
-        cannonical_string = "#{param_array.join('&')}"
+        canonical_string = "#{param_array.join('&')}"
 
         # make the string to sign and sign it
-        string_to_sign = "#{@method}\n#{@host}\n#{@uri}\n#{cannonical_string}"
+        string_to_sign = "#{@method}\n#{@host}\n#{@uri}\n#{canonical_string}"
         digest = OpenSSL::Digest::Digest.new('sha256')
         b64_hmac = [OpenSSL::HMAC.digest(digest, @secret_access_key, string_to_sign)].pack("m").strip
         signature = CGI.escape(b64_hmac)
-        return "#{@uri}?#{cannonical_string}&Signature=#{signature}"
+        #return "#{@uri}?#{canonical_string}&Signature=#{signature}"
+        return "#{canonical_string}&Signature=#{signature}"
       end
 
       def create_connection
